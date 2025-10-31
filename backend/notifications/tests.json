@@ -1,0 +1,28 @@
+{
+  "tests": [
+    {
+      "name": "Get notifications",
+      "method": "GET",
+      "path": "/?user_id=1",
+      "expectedStatus": 200,
+      "expectedBody": {
+        "notifications": "array",
+        "unread_count": "number"
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Mark notification as read",
+      "method": "POST",
+      "body": {
+        "action": "mark_read",
+        "user_id": 1
+      },
+      "expectedStatus": 200,
+      "expectedBody": {
+        "success": true
+      },
+      "bodyMatcher": "partial"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "tests": [
+    {
+      "name": "Search users",
+      "method": "GET",
+      "path": "/?action=search&q=test",
+      "expectedStatus": 200,
+      "expectedBody": {
+        "users": "array"
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Get friends list",
+      "method": "GET",
+      "path": "/?action=list&user_id=1",
+      "expectedStatus": 200,
+      "expectedBody": {
+        "friends": "array"
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Check friendship",
+      "method": "GET",
+      "path": "/?action=check&user_id=1&target_id=2",
+      "expectedStatus": 200,
+      "expectedBody": {
+        "is_friend": "boolean"
+      },
+      "bodyMatcher": "partial"
+    }
+  ]
+}
