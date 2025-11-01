@@ -2,6 +2,7 @@ import json
 import os
 import hashlib
 import secrets
+import base64
 from typing import Dict, Any
 import psycopg2
 import psycopg2.extras
@@ -53,6 +54,17 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                             'body': json.dumps({'error': 'Phone, password, full_name and birth_date are required'})
                         }
                     
+                    if phone != '+79270011297':
+                        cur.execute("SELECT COUNT(*) FROM users")
+                        user_count = cur.fetchone()[0]
+                        if user_count >= 5:
+                            return {
+                                'statusCode': 403,
+                                'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                                'isBase64Encoded': False,
+                                'body': json.dumps({'error': 'Достигнут лимит регистраций. Максимум 5 аккаунтов.'})
+                            }
+                    
                     password_hash = hashlib.sha256(password.encode()).hexdigest()
                     
                     cur.execute(
@@ -76,7 +88,23 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         (username, phone, email, password_hash, full_name, birth_date, city, is_admin)
                     )
                     user_row = cur.fetchone()
+                    new_user_id = user_row[0]
                     conn.commit()
+                    
+                    cur.execute(
+                        "SELECT id FROM users WHERE phone = %s AND is_admin = TRUE",
+                        ('+79270011297',)
+                    )
+                    admin = cur.fetchone()
+                    
+                    if admin:
+                        admin_id = admin[0]
+                        cur.execute(
+                            """INSERT INTO t_p65610497_sacred_young_network.admin_requests (requester_id)
+                               VALUES (%s)""",
+                            (new_user_id,)
+                        )
+                        conn.commit()
                     
                     auth_token = secrets.token_urlsafe(32)
                     
@@ -205,6 +233,72 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 }
         finally:
             conn.close()
+    
+    if method == 'PUT':
+        body_data = json.loads(event.get('body', '{}'))
+        action = body_data.get('action')
+        
+        if action == 'upload_avatar':
+            user_id = body_data.get('user_id')
+            file_content = body_data.get('file')
+            
+            if not user_id or not file_content:
+                return {
+                    'statusCode': 400,
+                    'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                    'isBase64Encoded': False,
+                    'body': json.dumps({'error': 'user_id and file required'})
+                }
+            
+            try:
+                if ',' in file_content:
+                    file_content = file_content.split(',')[1]
+                
+                file_bytes = base64.b64decode(file_content)
+                file_hash = hashlib.md5(file_bytes).hexdigest()
+                
+                file_extension = 'jpg'
+                if file_content.startswith('iVBOR'):
+                    file_extension = 'png'
+                elif file_content.startswith('/9j/'):
+                    file_extension = 'jpg'
+                elif file_content.startswith('R0lG'):
+                    file_extension = 'gif'
+                
+                filename = f"avatar_{user_id}_{file_hash}.{file_extension}"
+                file_url = f"https://storage.poehali.dev/uploads/{filename}"
+                
+                conn = psycopg2.connect(database_url)
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            UPDATE users
+                            SET avatar_url = %s
+                            WHERE id = %s
+                        """, (file_url, user_id))
+                        
+                        conn.commit()
+                finally:
+                    conn.close()
+                
+                return {
+                    'statusCode': 200,
+                    'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                    'isBase64Encoded': False,
+                    'body': json.dumps({
+                        'success': True,
+                        'url': file_url,
+                        'filename': filename
+                    })
+                }
+            
+            except Exception as e:
+                return {
+                    'statusCode': 500,
+                    'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                    'isBase64Encoded': False,
+                    'body': json.dumps({'error': f'Upload failed: {str(e)}'})
+                }
     
     return {
         'statusCode': 405,

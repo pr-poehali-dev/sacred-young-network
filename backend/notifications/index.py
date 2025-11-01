@@ -164,6 +164,117 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     'isBase64Encoded': False,
                     'body': json.dumps({'success': True, 'notification_id': notif_id})
                 }
+            
+            if action == 'get_admin_requests':
+                admin_phone = body_data.get('admin_phone')
+                
+                if admin_phone != '+79270011297':
+                    return {
+                        'statusCode': 403,
+                        'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                        'isBase64Encoded': False,
+                        'body': json.dumps({'error': 'Access denied'})
+                    }
+                
+                cur.execute("""
+                    SELECT 
+                        ar.id, 
+                        ar.requester_id, 
+                        ar.status, 
+                        ar.created_at,
+                        u.username,
+                        u.full_name,
+                        u.phone
+                    FROM t_p65610497_sacred_young_network.admin_requests ar
+                    JOIN t_p65610497_sacred_young_network.users u ON ar.requester_id = u.id
+                    WHERE ar.status = 'pending'
+                    ORDER BY ar.created_at DESC
+                """)
+                
+                requests = []
+                for row in cur.fetchall():
+                    requests.append({
+                        'id': row[0],
+                        'requester_id': row[1],
+                        'status': row[2],
+                        'created_at': row[3].isoformat() if row[3] else None,
+                        'username': row[4],
+                        'full_name': row[5],
+                        'phone': row[6]
+                    })
+                
+                return {
+                    'statusCode': 200,
+                    'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                    'isBase64Encoded': False,
+                    'body': json.dumps({'requests': requests})
+                }
+            
+            if action == 'resolve_admin_request':
+                admin_phone = body_data.get('admin_phone')
+                request_id = body_data.get('request_id')
+                decision = body_data.get('decision')
+                
+                if admin_phone != '+79270011297':
+                    return {
+                        'statusCode': 403,
+                        'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                        'isBase64Encoded': False,
+                        'body': json.dumps({'error': 'Access denied'})
+                    }
+                
+                if decision == 'approve':
+                    cur.execute("""
+                        SELECT requester_id FROM t_p65610497_sacred_young_network.admin_requests
+                        WHERE id = %s
+                    """, (request_id,))
+                    
+                    result = cur.fetchone()
+                    if result:
+                        requester_id = result[0]
+                        
+                        cur.execute("""
+                            UPDATE t_p65610497_sacred_young_network.users
+                            SET is_admin = TRUE
+                            WHERE id = %s
+                        """, (requester_id,))
+                        
+                        cur.execute("""
+                            UPDATE t_p65610497_sacred_young_network.admin_requests
+                            SET status = 'approved', resolved_at = CURRENT_TIMESTAMP
+                            WHERE id = %s
+                        """, (request_id,))
+                        
+                        conn.commit()
+                        
+                        return {
+                            'statusCode': 200,
+                            'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                            'isBase64Encoded': False,
+                            'body': json.dumps({'success': True, 'message': 'User promoted to admin'})
+                        }
+                elif decision == 'reject':
+                    cur.execute("""
+                        UPDATE t_p65610497_sacred_young_network.admin_requests
+                        SET status = 'rejected', resolved_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    """, (request_id,))
+                    
+                    conn.commit()
+                    
+                    return {
+                        'statusCode': 200,
+                        'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                        'isBase64Encoded': False,
+                        'body': json.dumps({'success': True, 'message': 'Request rejected'})
+                    }
+                
+                return {
+                    'statusCode': 400,
+                    'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                    'isBase64Encoded': False,
+                    'body': json.dumps({'error': 'Invalid decision'})
+                }
         
         return {
             'statusCode': 405,

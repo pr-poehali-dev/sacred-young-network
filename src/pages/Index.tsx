@@ -35,6 +35,15 @@ const Index = () => {
   const [emailVisible, setEmailVisible] = useState(false);
   const [userCity, setUserCity] = useState('');
   const [userBirthDate, setUserBirthDate] = useState('');
+  const [isAvatarUploadOpen, setIsAvatarUploadOpen] = useState(false);
+  const [playlists, setPlaylists] = useState<any[]>([]);
+  const [selectedPlaylist, setSelectedPlaylist] = useState<any>(null);
+  const [playlistTracks, setPlaylistTracks] = useState<any[]>([]);
+  const [isCreatePlaylistOpen, setIsCreatePlaylistOpen] = useState(false);
+  const [newPlaylistName, setNewPlaylistName] = useState('');
+  const [adminRequests, setAdminRequests] = useState<any[]>([]);
+  const [viewingCommunityId, setViewingCommunityId] = useState<number | null>(null);
+  const [communityPosts, setCommunityPosts] = useState<any[]>([]);
 
   const radioStations = [
     { id: 1, name: 'Русское Радио', genre: 'Поп', stream_url: 'http://rusradio.hostingradio.ru/rusradio96.aacp', listeners: 5432 },
@@ -56,6 +65,10 @@ const Index = () => {
       loadCommunities();
       loadFriends();
       loadNotifications();
+      loadPlaylists();
+      if (userData.phone === '+79270011297') {
+        loadAdminRequests();
+      }
     } else {
       setIsAuthOpen(true);
     }
@@ -399,6 +412,129 @@ const Index = () => {
       age--;
     }
     return age;
+  };
+
+  const uploadAvatar = async (file: File) => {
+    if (!user) return;
+    
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64 = reader.result as string;
+      
+      try {
+        const response = await fetch(API_AUTH, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'upload_avatar',
+            user_id: user.id,
+            file: base64
+          })
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+          const updatedUser = { ...user, avatar_url: data.url };
+          setUser(updatedUser);
+          localStorage.setItem('user', JSON.stringify(updatedUser));
+          setIsAvatarUploadOpen(false);
+          alert('Аватар загружен!');
+        }
+      } catch (error) {
+        console.error('Failed to upload avatar:', error);
+        alert('Ошибка загрузки аватара');
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const loadPlaylists = async () => {
+    if (!user) return;
+    try {
+      const response = await fetch(`${API_POSTS}?user_id=${user.id}&type=playlists`);
+      const data = await response.json();
+      setPlaylists(data.playlists || []);
+    } catch (error) {
+      console.error('Failed to load playlists:', error);
+    }
+  };
+
+  const createPlaylist = async () => {
+    if (!user || !newPlaylistName) return;
+    
+    try {
+      const response = await fetch(API_POSTS, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create_playlist',
+          user_id: user.id,
+          name: newPlaylistName,
+          description: ''
+        })
+      });
+      
+      const data = await response.json();
+      if (data.success) {
+        setNewPlaylistName('');
+        setIsCreatePlaylistOpen(false);
+        loadPlaylists();
+      }
+    } catch (error) {
+      console.error('Failed to create playlist:', error);
+    }
+  };
+
+  const loadAdminRequests = async () => {
+    if (!user || user.phone !== '+79270011297') return;
+    
+    try {
+      const response = await fetch(API_NOTIFICATIONS, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'get_admin_requests',
+          admin_phone: user.phone
+        })
+      });
+      
+      const data = await response.json();
+      setAdminRequests(data.requests || []);
+    } catch (error) {
+      console.error('Failed to load admin requests:', error);
+    }
+  };
+
+  const resolveAdminRequest = async (requestId: number, decision: string) => {
+    if (!user || user.phone !== '+79270011297') return;
+    
+    try {
+      await fetch(API_NOTIFICATIONS, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'resolve_admin_request',
+          admin_phone: user.phone,
+          request_id: requestId,
+          decision
+        })
+      });
+      
+      loadAdminRequests();
+    } catch (error) {
+      console.error('Failed to resolve request:', error);
+    }
+  };
+
+  const viewCommunityPosts = async (communityId: number) => {
+    setViewingCommunityId(communityId);
+    try {
+      const response = await fetch(`${API_COMMUNITIES}?action=get_posts&community_id=${communityId}`);
+      const data = await response.json();
+      setCommunityPosts(data.posts || []);
+    } catch (error) {
+      console.error('Failed to load community posts:', error);
+    }
   };
 
   if (!user) {
@@ -826,48 +962,98 @@ const Index = () => {
             {/* Communities Section */}
             {activeSection === 'communities' && (
               <div className="space-y-4">
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-2xl font-bold text-yellow-500">Группы</h2>
-                  <Button 
-                    onClick={createCommunity}
-                    className="bg-yellow-500 text-black hover:bg-yellow-400"
-                  >
-                    Создать группу
-                  </Button>
-                </div>
-                {communities.length === 0 ? (
-                  <Card className="p-6 bg-black border-2 border-yellow-500">
-                    <p className="text-gray-500 text-center">Нет групп</p>
-                  </Card>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {communities.map(community => (
-                      <Card key={community.id} className="p-6 bg-black border-2 border-yellow-500">
-                        <h3 className="text-xl font-bold text-yellow-500 mb-2">{community.name}</h3>
-                        <p className="text-gray-400 mb-4">{community.description}</p>
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm text-gray-400">{community.members_count || 0} участников</span>
-                          <div className="flex gap-2">
-                            {community.is_member ? (
-                              <Button 
-                                onClick={() => leaveCommunity(community.id)}
-                                className="bg-gray-700 text-white hover:bg-gray-600"
-                              >
-                                Выйти
-                              </Button>
-                            ) : (
-                              <Button 
-                                onClick={() => joinCommunity(community.id)}
-                                className="bg-yellow-500 text-black hover:bg-yellow-400"
-                              >
-                                Вступить
-                              </Button>
-                            )}
-                          </div>
-                        </div>
+                {viewingCommunityId ? (
+                  <>
+                    <Button 
+                      onClick={() => setViewingCommunityId(null)}
+                      variant="outline"
+                      className="border-yellow-500 text-yellow-500 hover:bg-yellow-500 hover:text-black mb-4"
+                    >
+                      ← Назад к группам
+                    </Button>
+                    <h2 className="text-2xl font-bold text-yellow-500 mb-4">Посты группы</h2>
+                    {communityPosts.length === 0 ? (
+                      <Card className="p-6 bg-black border-2 border-yellow-500">
+                        <p className="text-gray-500 text-center">Нет постов в этой группе</p>
                       </Card>
-                    ))}
-                  </div>
+                    ) : (
+                      communityPosts.map(post => (
+                        <Card key={post.id} className="p-4 bg-gray-900 border border-yellow-500">
+                          <div className="flex items-center gap-2 mb-3">
+                            <Avatar className="w-8 h-8 border border-yellow-500">
+                              <AvatarFallback className="bg-yellow-500 text-black text-xs">
+                                {post.author?.full_name?.charAt(0) || 'U'}
+                              </AvatarFallback>
+                            </Avatar>
+                            <span className="text-yellow-500 font-medium">{post.author?.full_name}</span>
+                          </div>
+                          <p className="text-white mb-2">{post.content}</p>
+                          {post.image_url && (
+                            <img src={post.image_url} alt="Post" className="rounded-lg w-full max-h-96 object-cover mb-2" />
+                          )}
+                          <p className="text-gray-400 text-sm">
+                            {new Date(post.created_at).toLocaleDateString('ru-RU')}
+                          </p>
+                        </Card>
+                      ))
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="flex justify-between items-center mb-4">
+                      <h2 className="text-2xl font-bold text-yellow-500">Группы</h2>
+                      <Button 
+                        onClick={createCommunity}
+                        className="bg-yellow-500 text-black hover:bg-yellow-400"
+                      >
+                        Создать группу
+                      </Button>
+                    </div>
+                    {communities.length === 0 ? (
+                      <Card className="p-6 bg-black border-2 border-yellow-500">
+                        <p className="text-gray-500 text-center">Нет групп</p>
+                      </Card>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {communities.map(community => (
+                          <Card 
+                            key={community.id} 
+                            className="p-6 bg-black border-2 border-yellow-500 cursor-pointer hover:border-yellow-400"
+                            onClick={() => viewCommunityPosts(community.id)}
+                          >
+                            <h3 className="text-xl font-bold text-yellow-500 mb-2">{community.name}</h3>
+                            <p className="text-gray-400 mb-4">{community.description}</p>
+                            <div className="flex justify-between items-center">
+                              <span className="text-sm text-gray-400">{community.members_count || 0} участников</span>
+                              <div className="flex gap-2">
+                                {community.is_member ? (
+                                  <Button 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      leaveCommunity(community.id);
+                                    }}
+                                    className="bg-gray-700 text-white hover:bg-gray-600"
+                                  >
+                                    Выйти
+                                  </Button>
+                                ) : (
+                                  <Button 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      joinCommunity(community.id);
+                                    }}
+                                    className="bg-yellow-500 text-black hover:bg-yellow-400"
+                                  >
+                                    Вступить
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          </Card>
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}
@@ -875,10 +1061,33 @@ const Index = () => {
             {/* Music Section */}
             {activeSection === 'music' && (
               <div className="space-y-4">
-                <h2 className="text-2xl font-bold text-yellow-500 mb-4">Музыка</h2>
-                <Card className="p-6 bg-black border-2 border-yellow-500">
-                  <p className="text-yellow-500">Раздел в разработке</p>
-                </Card>
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-2xl font-bold text-yellow-500">Музыка</h2>
+                  <Button 
+                    onClick={() => setIsCreatePlaylistOpen(true)}
+                    className="bg-yellow-500 text-black hover:bg-yellow-400"
+                  >
+                    Создать плейлист
+                  </Button>
+                </div>
+                
+                {playlists.length === 0 ? (
+                  <Card className="p-6 bg-black border-2 border-yellow-500">
+                    <p className="text-gray-500 text-center">Нет плейлистов</p>
+                    <p className="text-gray-600 text-center text-sm mt-2">Создайте свой первый плейлист</p>
+                  </Card>
+                ) : (
+                  playlists.map(playlist => (
+                    <Card key={playlist.id} className="p-4 bg-gray-900 border border-yellow-500 cursor-pointer hover:border-yellow-400" onClick={() => setSelectedPlaylist(playlist)}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="text-xl font-bold text-yellow-500">{playlist.name}</h3>
+                          <p className="text-gray-400 text-sm mt-1">{playlist.track_count} треков</p>
+                        </div>
+                      </div>
+                    </Card>
+                  ))
+                )}
               </div>
             )}
 
@@ -896,11 +1105,24 @@ const Index = () => {
               <div className="space-y-4">
                 <Card className="p-6 bg-black border-2 border-yellow-500">
                   <div className="flex items-center gap-4 mb-6">
-                    <Avatar className="w-24 h-24 border-2 border-yellow-500">
-                      <AvatarFallback className="bg-yellow-500 text-black text-3xl">
-                        {displayUser?.full_name?.charAt(0) || displayUser?.phone?.charAt(2)}
-                      </AvatarFallback>
-                    </Avatar>
+                    <div className="relative">
+                      <Avatar className="w-24 h-24 border-2 border-yellow-500 cursor-pointer" onClick={() => !viewingUserId && setIsAvatarUploadOpen(true)}>
+                        {displayUser?.avatar_url ? (
+                          <img src={displayUser.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
+                        ) : (
+                          <AvatarFallback className="bg-yellow-500 text-black text-3xl">
+                            {displayUser?.full_name?.charAt(0) || displayUser?.phone?.charAt(2)}
+                          </AvatarFallback>
+                        )}
+                      </Avatar>
+                      {!viewingUserId && (
+                        <div className="absolute bottom-0 right-0 bg-yellow-500 rounded-full p-1 cursor-pointer" onClick={() => setIsAvatarUploadOpen(true)}>
+                          <svg className="w-4 h-4 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                          </svg>
+                        </div>
+                      )}
+                    </div>
                     <div className="flex-1">
                       <h2 className="text-2xl font-bold text-yellow-500">{displayUser?.full_name}</h2>
                       <p className="text-gray-400">{displayUser?.phone}</p>
@@ -1069,6 +1291,86 @@ const Index = () => {
           </main>
         </div>
       </div>
+
+      {/* Avatar Upload Dialog */}
+      <Dialog open={isAvatarUploadOpen} onOpenChange={setIsAvatarUploadOpen}>
+        <DialogContent className="bg-black border-2 border-yellow-500">
+          <DialogHeader>
+            <DialogTitle className="text-yellow-500">Загрузить аватар</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Input 
+              type="file" 
+              accept="image/*"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) uploadAvatar(file);
+              }}
+              className="bg-gray-900 border-yellow-500 text-white"
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Playlist Creation Dialog */}
+      <Dialog open={isCreatePlaylistOpen} onOpenChange={setIsCreatePlaylistOpen}>
+        <DialogContent className="bg-black border-2 border-yellow-500">
+          <DialogHeader>
+            <DialogTitle className="text-yellow-500">Создать плейлист</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="playlist-name" className="text-yellow-500">Название плейлиста</Label>
+              <Input 
+                id="playlist-name"
+                value={newPlaylistName}
+                onChange={(e) => setNewPlaylistName(e.target.value)}
+                className="bg-gray-900 border-yellow-500 text-white mt-2"
+                placeholder="Мой плейлист"
+              />
+            </div>
+            <Button 
+              onClick={createPlaylist}
+              className="w-full bg-yellow-500 text-black hover:bg-yellow-400"
+            >
+              Создать
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Admin Requests Dialog */}
+      {user?.phone === '+79270011297' && adminRequests.length > 0 && (
+        <Dialog open={true} onOpenChange={() => setAdminRequests([])}>
+          <DialogContent className="bg-black border-2 border-yellow-500">
+            <DialogHeader>
+              <DialogTitle className="text-yellow-500">Запросы на администратора</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              {adminRequests.map(request => (
+                <Card key={request.id} className="p-4 bg-gray-900 border border-yellow-500">
+                  <p className="text-white mb-2">{request.full_name} ({request.phone})</p>
+                  <p className="text-gray-400 text-sm mb-3">Это ваш аккаунт?</p>
+                  <div className="flex gap-2">
+                    <Button 
+                      onClick={() => resolveAdminRequest(request.id, 'approve')}
+                      className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+                    >
+                      Подтвердить
+                    </Button>
+                    <Button 
+                      onClick={() => resolveAdminRequest(request.id, 'reject')}
+                      className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+                    >
+                      Отклонить
+                    </Button>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 };
