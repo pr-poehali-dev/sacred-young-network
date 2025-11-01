@@ -4,8 +4,7 @@ import { Card } from '@/components/ui/card';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import Icon from '@/components/ui/icon';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import RadioPlayer from '@/components/RadioPlayer';
@@ -31,24 +30,37 @@ const Index = () => {
   const [authMode, setAuthMode] = useState('login');
   const [newPostContent, setNewPostContent] = useState('');
   const [currentRadioStation, setCurrentRadioStation] = useState<number | null>(null);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [likedPosts, setLikedPosts] = useState<number[]>([]);
+  const [emailVisible, setEmailVisible] = useState(false);
+  const [userCity, setUserCity] = useState('');
+  const [userBirthDate, setUserBirthDate] = useState('');
 
   const radioStations = [
-    { id: 1, name: 'Rock FM', genre: 'Rock', stream_url: 'http://stream.radioparadise.com/rock-320', listeners: 1234 },
-    { id: 2, name: 'Electronic Beats', genre: 'Electronic', stream_url: 'http://stream.radioparadise.com/eclectic-320', listeners: 2156 },
-    { id: 3, name: 'Hip-Hop Nation', genre: 'Hip-Hop', stream_url: 'http://stream.radioparadise.com/mellow-320', listeners: 1890 },
-    { id: 4, name: 'Jazz Lounge', genre: 'Jazz', stream_url: 'http://stream.radioparadise.com/world-320', listeners: 876 }
+    { id: 1, name: 'Русское Радио', genre: 'Поп', stream_url: 'http://rusradio.hostingradio.ru/rusradio96.aacp', listeners: 5432 },
+    { id: 2, name: 'Европа Плюс', genre: 'Хиты', stream_url: 'http://ep128.hostingradio.ru:8030/ep128', listeners: 4321 },
+    { id: 3, name: 'Дорожное Радио', genre: 'Рок', stream_url: 'http://dor.hostingradio.ru:8000/dor', listeners: 3210 },
+    { id: 4, name: 'Ретро FM', genre: 'Ретро', stream_url: 'http://retroserver.hostingradio.ru:8043/retro', listeners: 2987 }
   ];
 
   useEffect(() => {
     const savedUser = localStorage.getItem('user');
+    const savedLikedPosts = localStorage.getItem('likedPosts');
     if (savedUser) {
-      setUser(JSON.parse(savedUser));
+      const userData = JSON.parse(savedUser);
+      setUser(userData);
+      setUserCity(userData.city || '');
+      setUserBirthDate(userData.birth_date || '');
+      setEmailVisible(userData.email_visible || false);
       loadPosts();
       loadCommunities();
       loadFriends();
       loadNotifications();
     } else {
       setIsAuthOpen(true);
+    }
+    if (savedLikedPosts) {
+      setLikedPosts(JSON.parse(savedLikedPosts));
     }
   }, []);
 
@@ -177,11 +189,34 @@ const Index = () => {
     return friends.some(friend => friend.id === targetId);
   };
 
+  const validatePhone = (phone: string): boolean => {
+    const phoneRegex = /^(\+7|\+1)\d{10,11}$/;
+    return phoneRegex.test(phone);
+  };
+
+  const validateBirthYear = (birthDate: string): boolean => {
+    const year = new Date(birthDate).getFullYear();
+    return year >= 2000;
+  };
+
   const handleAuth = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    const username = formData.get('username') as string;
+    const phone = formData.get('phone') as string;
     const password = formData.get('password') as string;
+    
+    if (authMode === 'register') {
+      if (!validatePhone(phone)) {
+        alert('Номер телефона должен начинаться с +7 или +1 и содержать 10-11 цифр');
+        return;
+      }
+      
+      const birthDate = formData.get('birth_date') as string;
+      if (!validateBirthYear(birthDate)) {
+        alert('Год рождения должен быть не раньше 2000');
+        return;
+      }
+    }
     
     try {
       const response = await fetch(API_AUTH, {
@@ -189,11 +224,14 @@ const Index = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: authMode,
-          username,
+          username: phone,
+          phone,
           password,
           email: authMode === 'register' ? formData.get('email') : undefined,
           full_name: authMode === 'register' ? formData.get('full_name') : undefined,
-          is_admin: authMode === 'register' && username === 'admin'
+          birth_date: authMode === 'register' ? formData.get('birth_date') : undefined,
+          city: authMode === 'register' ? formData.get('city') : undefined,
+          is_admin: authMode === 'register' && phone === 'admin'
         })
       });
       
@@ -240,7 +278,7 @@ const Index = () => {
   };
 
   const likePost = async (postId: number) => {
-    if (!user) return;
+    if (!user || likedPosts.includes(postId)) return;
     
     try {
       await fetch(API_POSTS, {
@@ -252,6 +290,9 @@ const Index = () => {
           user_id: user.id
         })
       });
+      const newLikedPosts = [...likedPosts, postId];
+      setLikedPosts(newLikedPosts);
+      localStorage.setItem('likedPosts', JSON.stringify(newLikedPosts));
       loadPosts();
     } catch (error) {
       console.error('Failed to like post:', error);
@@ -277,6 +318,67 @@ const Index = () => {
     }
   };
 
+  const leaveCommunity = async (communityId: number) => {
+    if (!user) return;
+    
+    try {
+      await fetch(API_COMMUNITIES, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'leave',
+          community_id: communityId,
+          user_id: user.id
+        })
+      });
+      loadCommunities();
+    } catch (error) {
+      console.error('Failed to leave community:', error);
+    }
+  };
+
+  const createCommunity = async () => {
+    if (!user) return;
+    const name = prompt('Название группы:');
+    const description = prompt('Описание группы:');
+    
+    if (!name || !description) return;
+    
+    try {
+      await fetch(API_COMMUNITIES, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create',
+          name,
+          description,
+          creator_id: user.id
+        })
+      });
+      loadCommunities();
+    } catch (error) {
+      console.error('Failed to create community:', error);
+    }
+  };
+
+  const updateSettings = async () => {
+    if (!user) return;
+    
+    try {
+      const updatedUser = { 
+        ...user, 
+        email_visible: emailVisible,
+        city: userCity,
+        birth_date: userBirthDate
+      };
+      setUser(updatedUser);
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      alert('Настройки сохранены');
+    } catch (error) {
+      console.error('Failed to update settings:', error);
+    }
+  };
+
   const logout = () => {
     setUser(null);
     localStorage.removeItem('user');
@@ -286,6 +388,17 @@ const Index = () => {
     setUnreadCount(0);
     setSearchResults([]);
     setViewingUserId(null);
+  };
+
+  const calculateAge = (birthDate: string): number => {
+    const birth = new Date(birthDate);
+    const today = new Date();
+    let age = today.getFullYear() - birth.getFullYear();
+    const monthDiff = today.getMonth() - birth.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+      age--;
+    }
+    return age;
   };
 
   if (!user) {
@@ -301,21 +414,35 @@ const Index = () => {
             {authMode === 'register' && (
               <>
                 <div>
-                  <Label htmlFor="full_name" className="text-yellow-500">Имя</Label>
+                  <Label htmlFor="full_name" className="text-yellow-500">Имя *</Label>
                   <Input id="full_name" name="full_name" required className="bg-gray-900 border-yellow-500 text-white" />
                 </div>
                 <div>
-                  <Label htmlFor="email" className="text-yellow-500">Email</Label>
-                  <Input id="email" name="email" type="email" required className="bg-gray-900 border-yellow-500 text-white" />
+                  <Label htmlFor="birth_date" className="text-yellow-500">Дата рождения * (мин. 2000 год)</Label>
+                  <Input id="birth_date" name="birth_date" type="date" required className="bg-gray-900 border-yellow-500 text-white" />
+                </div>
+                <div>
+                  <Label htmlFor="city" className="text-yellow-500">Город</Label>
+                  <Input id="city" name="city" className="bg-gray-900 border-yellow-500 text-white" />
+                </div>
+                <div>
+                  <Label htmlFor="email" className="text-yellow-500">Email (необязательно)</Label>
+                  <Input id="email" name="email" type="email" className="bg-gray-900 border-yellow-500 text-white" />
                 </div>
               </>
             )}
             <div>
-              <Label htmlFor="username" className="text-yellow-500">Username</Label>
-              <Input id="username" name="username" required className="bg-gray-900 border-yellow-500 text-white" />
+              <Label htmlFor="phone" className="text-yellow-500">Телефон * (+7 или +1)</Label>
+              <Input 
+                id="phone" 
+                name="phone" 
+                required 
+                placeholder="+79991234567"
+                className="bg-gray-900 border-yellow-500 text-white" 
+              />
             </div>
             <div>
-              <Label htmlFor="password" className="text-yellow-500">Пароль</Label>
+              <Label htmlFor="password" className="text-yellow-500">Пароль *</Label>
               <Input id="password" name="password" type="password" required className="bg-gray-900 border-yellow-500 text-white" />
             </div>
             <Button type="submit" className="w-full bg-yellow-500 text-black hover:bg-yellow-400">
@@ -339,11 +466,37 @@ const Index = () => {
     ? searchResults.find(u => u.id === viewingUserId) || friends.find(f => f.id === viewingUserId)
     : user;
 
+  const popularCommunities = communities
+    .sort((a, b) => (b.members_count || 0) - (a.members_count || 0))
+    .slice(0, 3);
+
+  const menuItems = [
+    { id: 'feed', label: 'Лента' },
+    { id: 'friends', label: 'Друзья' },
+    { id: 'search', label: 'Поиск' },
+    { id: 'messages', label: 'Сообщения' },
+    { id: 'communities', label: 'Группы' },
+    { id: 'music', label: 'Музыка' },
+    { id: 'radio', label: 'Радио' },
+    { id: 'profile', label: 'Профиль' },
+    { id: 'settings', label: 'Настройки' }
+  ];
+
   return (
     <div className="min-h-screen bg-black">
+      {/* Header */}
       <nav className="sticky top-0 z-50 bg-black border-b-2 border-yellow-500">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              className="md:hidden text-yellow-500 hover:bg-yellow-500 hover:text-black"
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </Button>
             <div className="w-12 h-12 bg-yellow-500 rounded-lg flex items-center justify-center">
               <span className="text-black font-bold text-2xl">СМ</span>
             </div>
@@ -352,45 +505,13 @@ const Index = () => {
             </h1>
           </div>
 
-          <div className="hidden md:flex items-center gap-6">
-            {['feed', 'communities', 'music', 'radio', 'messages', 'profile'].map((section) => (
-              <Button
-                key={section}
-                variant="ghost"
-                className={`gap-2 text-yellow-500 hover:bg-yellow-500 hover:text-black ${
-                  activeSection === section ? 'bg-yellow-500 text-black' : ''
-                }`}
-                onClick={() => {
-                  setActiveSection(section);
-                  if (section !== 'profile') {
-                    setViewingUserId(null);
-                  }
-                }}
-              >
-                <Icon 
-                  name={
-                    section === 'feed' ? 'home' :
-                    section === 'communities' ? 'users' :
-                    section === 'music' ? 'music' :
-                    section === 'radio' ? 'radio' :
-                    section === 'messages' ? 'message-circle' : 'user'
-                  } 
-                  className="w-5 h-5"
-                />
-                {section === 'feed' ? 'Лента' :
-                 section === 'communities' ? 'Группы' :
-                 section === 'music' ? 'Музыка' :
-                 section === 'radio' ? 'Радио' :
-                 section === 'messages' ? 'Сообщения' : 'Профиль'}
-              </Button>
-            ))}
-          </div>
-
           <div className="flex items-center gap-4">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="relative text-yellow-500 hover:bg-yellow-500 hover:text-black">
-                  <Icon name="bell" className="w-5 h-5" />
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                  </svg>
                   {unreadCount > 0 && (
                     <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
                       {unreadCount}
@@ -438,24 +559,51 @@ const Index = () => {
               </DropdownMenuContent>
             </DropdownMenu>
             <Button variant="ghost" className="text-yellow-500 hover:bg-yellow-500 hover:text-black" onClick={logout}>
-              <Icon name="log-out" className="w-5 h-5" />
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
             </Button>
           </div>
         </div>
       </nav>
 
       <div className="container mx-auto px-4 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          <aside className="lg:col-span-1 space-y-4">
-            <Card className="p-6 bg-black border-2 border-yellow-500">
+        <div className="flex gap-6">
+          {/* Left Sidebar Menu */}
+          <aside className={`${isMobileMenuOpen ? 'block' : 'hidden'} md:block fixed md:sticky top-0 left-0 w-64 h-screen md:h-auto bg-black z-40 md:z-0 border-r-2 border-yellow-500 md:border-r-0`}>
+            <Card className="p-4 bg-black border-2 border-yellow-500">
+              <nav className="space-y-2">
+                {menuItems.map((item) => (
+                  <Button
+                    key={item.id}
+                    variant="ghost"
+                    className={`w-full justify-start text-yellow-500 hover:bg-yellow-500 hover:text-black ${
+                      activeSection === item.id ? 'bg-yellow-500 text-black' : ''
+                    }`}
+                    onClick={() => {
+                      setActiveSection(item.id);
+                      setIsMobileMenuOpen(false);
+                      if (item.id !== 'profile') {
+                        setViewingUserId(null);
+                      }
+                    }}
+                  >
+                    {item.label}
+                  </Button>
+                ))}
+              </nav>
+            </Card>
+
+            {/* User Stats */}
+            <Card className="p-6 bg-black border-2 border-yellow-500 mt-4">
               <div className="flex flex-col items-center text-center">
                 <Avatar className="w-20 h-20 border-2 border-yellow-500">
                   <AvatarFallback className="bg-yellow-500 text-black text-2xl">
-                    {user.full_name?.charAt(0) || user.username?.charAt(0)}
+                    {user.full_name?.charAt(0) || user.phone?.charAt(2)}
                   </AvatarFallback>
                 </Avatar>
                 <h2 className="mt-4 text-xl font-bold text-yellow-500">{user.full_name}</h2>
-                <p className="text-gray-400">@{user.username}</p>
+                <p className="text-gray-400">{user.phone}</p>
                 <div className="flex gap-4 mt-4 w-full">
                   <div className="flex-1 text-center">
                     <p className="text-2xl font-bold text-yellow-500">{friends.length}</p>
@@ -469,18 +617,25 @@ const Index = () => {
               </div>
             </Card>
 
-            <Card className="p-4 bg-black border-2 border-yellow-500">
+            {/* Popular Groups */}
+            <Card className="p-4 bg-black border-2 border-yellow-500 mt-4">
               <h3 className="font-bold text-yellow-500 mb-3">Популярные группы</h3>
-              {communities.slice(0, 3).map(community => (
-                <div key={community.id} className="mb-3 last:mb-0">
-                  <p className="text-white font-medium">{community.name}</p>
-                  <p className="text-xs text-gray-400">{community.members_count} участников</p>
-                </div>
-              ))}
+              {popularCommunities.length === 0 ? (
+                <p className="text-gray-500 text-sm">Нет групп</p>
+              ) : (
+                popularCommunities.map(community => (
+                  <div key={community.id} className="mb-3 last:mb-0">
+                    <p className="text-white font-medium">{community.name}</p>
+                    <p className="text-xs text-gray-400">{community.members_count || 0} участников</p>
+                  </div>
+                ))
+              )}
             </Card>
           </aside>
 
-          <main className="lg:col-span-3">
+          {/* Main Content */}
+          <main className="flex-1 min-w-0">
+            {/* Feed Section */}
             {activeSection === 'feed' && (
               <div className="space-y-4">
                 <Card className="p-4 bg-black border-2 border-yellow-500">
@@ -495,90 +650,107 @@ const Index = () => {
                   </Button>
                 </Card>
 
-                {posts.map(post => (
-                  <Card key={post.id} className="p-4 bg-black border-2 border-yellow-500">
-                    <div className="flex gap-3">
-                      <Avatar className="border-2 border-yellow-500">
-                        <AvatarFallback className="bg-yellow-500 text-black">
-                          {post.user_name?.charAt(0)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-bold text-yellow-500">{post.user_name}</h3>
-                          <span className="text-gray-400 text-sm">
-                            {new Date(post.created_at).toLocaleDateString('ru-RU')}
-                          </span>
-                        </div>
-                        <p className="text-white mt-2">{post.content}</p>
-                        <div className="flex gap-4 mt-3">
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className="text-yellow-500 hover:bg-yellow-500 hover:text-black"
-                            onClick={() => likePost(post.id)}
-                          >
-                            <Icon name="heart" className="w-4 h-4 mr-1" />
-                            {post.likes_count || 0}
-                          </Button>
-                          <Button variant="ghost" size="sm" className="text-yellow-500 hover:bg-yellow-500 hover:text-black">
-                            <Icon name="message-circle" className="w-4 h-4 mr-1" />
-                            {post.comments_count || 0}
-                          </Button>
+                {posts.length === 0 ? (
+                  <Card className="p-6 bg-black border-2 border-yellow-500">
+                    <p className="text-gray-500 text-center">Нет постов</p>
+                  </Card>
+                ) : (
+                  posts.map(post => (
+                    <Card key={post.id} className="p-4 bg-black border-2 border-yellow-500">
+                      <div className="flex gap-3">
+                        <Avatar className="border-2 border-yellow-500">
+                          <AvatarFallback className="bg-yellow-500 text-black">
+                            {post.user_name?.charAt(0) || 'U'}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-bold text-yellow-500">{post.user_name || 'Unknown User'}</h3>
+                            <span className="text-gray-400 text-sm">
+                              {new Date(post.created_at).toLocaleDateString('ru-RU')}
+                            </span>
+                          </div>
+                          <p className="text-gray-400 text-sm">{post.username || post.phone}</p>
+                          <p className="text-white mt-2">{post.content}</p>
+                          <div className="flex gap-4 mt-3">
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              className="text-yellow-500 hover:bg-yellow-500 hover:text-black"
+                              onClick={() => likePost(post.id)}
+                              disabled={likedPosts.includes(post.id)}
+                            >
+                              <svg className="w-4 h-4 mr-1" fill={likedPosts.includes(post.id) ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                              </svg>
+                              {post.likes_count || 0}
+                            </Button>
+                            <Button variant="ghost" size="sm" className="text-yellow-500 hover:bg-yellow-500 hover:text-black">
+                              <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                              </svg>
+                              {post.comments_count || 0}
+                            </Button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </Card>
-                ))}
+                    </Card>
+                  ))
+                )}
               </div>
             )}
 
-            {activeSection === 'communities' && (
+            {/* Friends Section */}
+            {activeSection === 'friends' && (
               <div className="space-y-4">
-                <h2 className="text-2xl font-bold text-yellow-500 mb-4">Группы</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {communities.map(community => (
-                    <Card key={community.id} className="p-6 bg-black border-2 border-yellow-500">
-                      <h3 className="text-xl font-bold text-yellow-500 mb-2">{community.name}</h3>
-                      <p className="text-gray-400 mb-4">{community.description}</p>
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm text-gray-400">{community.members_count} участников</span>
+                <h2 className="text-2xl font-bold text-yellow-500 mb-4">Друзья</h2>
+                {friends.length === 0 ? (
+                  <Card className="p-6 bg-black border-2 border-yellow-500">
+                    <p className="text-gray-500 text-center">У вас пока нет друзей</p>
+                  </Card>
+                ) : (
+                  friends.map(friend => (
+                    <Card 
+                      key={friend.id} 
+                      className="p-4 bg-black border-2 border-yellow-500 cursor-pointer hover:border-yellow-400"
+                      onClick={() => viewUserProfile(friend.id)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <Avatar className="border-2 border-yellow-500">
+                            <AvatarFallback className="bg-yellow-500 text-black">
+                              {friend.full_name?.charAt(0) || friend.phone?.charAt(2)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <h3 className="font-bold text-yellow-500">{friend.full_name}</h3>
+                            <p className="text-gray-400 text-sm">{friend.phone}</p>
+                            {friend.city && <p className="text-gray-500 text-xs">{friend.city}</p>}
+                          </div>
+                        </div>
                         <Button 
-                          onClick={() => joinCommunity(community.id)}
-                          className="bg-yellow-500 text-black hover:bg-yellow-400"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeFriend(friend.id);
+                          }}
+                          className="bg-gray-700 text-white hover:bg-gray-600"
                         >
-                          Вступить
+                          Удалить
                         </Button>
                       </div>
                     </Card>
-                  ))}
-                </div>
+                  ))
+                )}
               </div>
             )}
 
-            {activeSection === 'music' && (
-              <div className="space-y-4">
-                <h2 className="text-2xl font-bold text-yellow-500 mb-4">Музыка</h2>
-                <Card className="p-6 bg-black border-2 border-yellow-500">
-                  <p className="text-yellow-500">Раздел в разработке</p>
-                </Card>
-              </div>
-            )}
-
-            {activeSection === 'radio' && (
-              <RadioPlayer 
-                stations={radioStations} 
-                currentStationId={currentRadioStation}
-                onStationChange={setCurrentRadioStation}
-              />
-            )}
-
-            {activeSection === 'messages' && (
+            {/* Search Section */}
+            {activeSection === 'search' && (
               <div className="space-y-4">
                 <h2 className="text-2xl font-bold text-yellow-500 mb-4">Поиск пользователей</h2>
                 <Card className="p-4 bg-black border-2 border-yellow-500">
                   <Input
-                    placeholder="Поиск пользователей..."
+                    placeholder="Поиск по имени, городу..."
                     value={searchQuery}
                     onChange={(e) => {
                       setSearchQuery(e.target.value);
@@ -591,6 +763,11 @@ const Index = () => {
                     className="bg-gray-900 border-yellow-500 text-white"
                   />
                 </Card>
+                {searchResults.length === 0 && searchQuery.length > 2 && (
+                  <Card className="p-6 bg-black border-2 border-yellow-500">
+                    <p className="text-gray-500 text-center">Ничего не найдено</p>
+                  </Card>
+                )}
                 {searchResults.map(searchUser => (
                   <Card 
                     key={searchUser.id} 
@@ -600,12 +777,16 @@ const Index = () => {
                       <div className="flex items-center gap-3" onClick={() => viewUserProfile(searchUser.id)}>
                         <Avatar className="border-2 border-yellow-500">
                           <AvatarFallback className="bg-yellow-500 text-black">
-                            {searchUser.full_name?.charAt(0) || searchUser.username?.charAt(0)}
+                            {searchUser.full_name?.charAt(0) || searchUser.phone?.charAt(2)}
                           </AvatarFallback>
                         </Avatar>
                         <div>
                           <h3 className="font-bold text-yellow-500">{searchUser.full_name}</h3>
-                          <p className="text-gray-400 text-sm">@{searchUser.username}</p>
+                          <p className="text-gray-400 text-sm">{searchUser.phone}</p>
+                          <div className="text-gray-500 text-xs mt-1">
+                            {searchUser.city && <span>{searchUser.city}</span>}
+                            {searchUser.birth_date && <span> • {calculateAge(searchUser.birth_date)} лет</span>}
+                          </div>
                         </div>
                       </div>
                       {searchUser.id !== user.id && (
@@ -631,19 +812,105 @@ const Index = () => {
               </div>
             )}
 
+            {/* Messages Section */}
+            {activeSection === 'messages' && (
+              <div className="space-y-4">
+                <h2 className="text-2xl font-bold text-yellow-500 mb-4">Сообщения</h2>
+                <Card className="p-6 bg-black border-2 border-yellow-500">
+                  <p className="text-yellow-500 text-center text-lg">Сообщения будут доступны скоро</p>
+                  <p className="text-gray-500 text-center mt-2">Функция в разработке</p>
+                </Card>
+              </div>
+            )}
+
+            {/* Communities Section */}
+            {activeSection === 'communities' && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-2xl font-bold text-yellow-500">Группы</h2>
+                  <Button 
+                    onClick={createCommunity}
+                    className="bg-yellow-500 text-black hover:bg-yellow-400"
+                  >
+                    Создать группу
+                  </Button>
+                </div>
+                {communities.length === 0 ? (
+                  <Card className="p-6 bg-black border-2 border-yellow-500">
+                    <p className="text-gray-500 text-center">Нет групп</p>
+                  </Card>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {communities.map(community => (
+                      <Card key={community.id} className="p-6 bg-black border-2 border-yellow-500">
+                        <h3 className="text-xl font-bold text-yellow-500 mb-2">{community.name}</h3>
+                        <p className="text-gray-400 mb-4">{community.description}</p>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-gray-400">{community.members_count || 0} участников</span>
+                          <div className="flex gap-2">
+                            {community.is_member ? (
+                              <Button 
+                                onClick={() => leaveCommunity(community.id)}
+                                className="bg-gray-700 text-white hover:bg-gray-600"
+                              >
+                                Выйти
+                              </Button>
+                            ) : (
+                              <Button 
+                                onClick={() => joinCommunity(community.id)}
+                                className="bg-yellow-500 text-black hover:bg-yellow-400"
+                              >
+                                Вступить
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Music Section */}
+            {activeSection === 'music' && (
+              <div className="space-y-4">
+                <h2 className="text-2xl font-bold text-yellow-500 mb-4">Музыка</h2>
+                <Card className="p-6 bg-black border-2 border-yellow-500">
+                  <p className="text-yellow-500">Раздел в разработке</p>
+                </Card>
+              </div>
+            )}
+
+            {/* Radio Section */}
+            {activeSection === 'radio' && (
+              <RadioPlayer 
+                stations={radioStations} 
+                currentStationId={currentRadioStation}
+                onStationChange={setCurrentRadioStation}
+              />
+            )}
+
+            {/* Profile Section */}
             {activeSection === 'profile' && (
               <div className="space-y-4">
                 <Card className="p-6 bg-black border-2 border-yellow-500">
                   <div className="flex items-center gap-4 mb-6">
                     <Avatar className="w-24 h-24 border-2 border-yellow-500">
                       <AvatarFallback className="bg-yellow-500 text-black text-3xl">
-                        {displayUser?.full_name?.charAt(0) || displayUser?.username?.charAt(0)}
+                        {displayUser?.full_name?.charAt(0) || displayUser?.phone?.charAt(2)}
                       </AvatarFallback>
                     </Avatar>
                     <div className="flex-1">
                       <h2 className="text-2xl font-bold text-yellow-500">{displayUser?.full_name}</h2>
-                      <p className="text-gray-400">@{displayUser?.username}</p>
-                      <p className="text-gray-500 mt-2">{displayUser?.email}</p>
+                      <p className="text-gray-400">{displayUser?.phone}</p>
+                      {displayUser?.city && <p className="text-gray-500 mt-1">{displayUser.city}</p>}
+                      {displayUser?.birth_date && (
+                        <p className="text-gray-500">{calculateAge(displayUser.birth_date)} лет</p>
+                      )}
+                      {displayUser?.email && (emailVisible || viewingUserId) && (
+                        <p className="text-gray-500 mt-2">{displayUser.email}</p>
+                      )}
                     </div>
                     {viewingUserId && viewingUserId !== user.id && (
                       <div className="flex gap-2">
@@ -687,51 +954,115 @@ const Index = () => {
                     <TabsContent value="posts" className="mt-4 space-y-4">
                       {posts
                         .filter(post => post.user_id === (viewingUserId || user.id))
-                        .map(post => (
-                          <Card key={post.id} className="p-4 bg-gray-900 border border-yellow-500">
-                            <p className="text-white">{post.content}</p>
-                            <p className="text-gray-400 text-sm mt-2">
-                              {new Date(post.created_at).toLocaleDateString('ru-RU')}
-                            </p>
-                            <div className="flex gap-4 mt-3">
-                              <span className="text-yellow-500 text-sm">
-                                <Icon name="heart" className="w-4 h-4 inline mr-1" />
-                                {post.likes_count || 0}
-                              </span>
-                              <span className="text-yellow-500 text-sm">
-                                <Icon name="message-circle" className="w-4 h-4 inline mr-1" />
-                                {post.comments_count || 0}
-                              </span>
-                            </div>
+                        .length === 0 ? (
+                          <Card className="p-6 bg-gray-900 border border-yellow-500">
+                            <p className="text-gray-500 text-center">Нет постов</p>
                           </Card>
-                        ))}
+                        ) : (
+                          posts
+                            .filter(post => post.user_id === (viewingUserId || user.id))
+                            .map(post => (
+                              <Card key={post.id} className="p-4 bg-gray-900 border border-yellow-500">
+                                <p className="text-white">{post.content}</p>
+                                <p className="text-gray-400 text-sm mt-2">
+                                  {new Date(post.created_at).toLocaleDateString('ru-RU')}
+                                </p>
+                                <div className="flex gap-4 mt-3">
+                                  <span className="text-yellow-500 text-sm">
+                                    <svg className="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                                    </svg>
+                                    {post.likes_count || 0}
+                                  </span>
+                                  <span className="text-yellow-500 text-sm">
+                                    <svg className="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                                    </svg>
+                                    {post.comments_count || 0}
+                                  </span>
+                                </div>
+                              </Card>
+                            ))
+                        )}
                     </TabsContent>
                     <TabsContent value="friends" className="mt-4 space-y-4">
                       {viewingUserId ? (
                         <p className="text-gray-400">Список друзей пользователя</p>
                       ) : (
-                        friends.map(friend => (
-                          <Card 
-                            key={friend.id} 
-                            className="p-4 bg-gray-900 border border-yellow-500 cursor-pointer hover:border-yellow-400"
-                            onClick={() => viewUserProfile(friend.id)}
-                          >
-                            <div className="flex items-center gap-3">
-                              <Avatar className="border-2 border-yellow-500">
-                                <AvatarFallback className="bg-yellow-500 text-black">
-                                  {friend.full_name?.charAt(0) || friend.username?.charAt(0)}
-                                </AvatarFallback>
-                              </Avatar>
-                              <div>
-                                <h3 className="font-bold text-yellow-500">{friend.full_name}</h3>
-                                <p className="text-gray-400 text-sm">@{friend.username}</p>
-                              </div>
-                            </div>
+                        friends.length === 0 ? (
+                          <Card className="p-6 bg-gray-900 border border-yellow-500">
+                            <p className="text-gray-500 text-center">Нет друзей</p>
                           </Card>
-                        ))
+                        ) : (
+                          friends.map(friend => (
+                            <Card 
+                              key={friend.id} 
+                              className="p-4 bg-gray-900 border border-yellow-500 cursor-pointer hover:border-yellow-400"
+                              onClick={() => viewUserProfile(friend.id)}
+                            >
+                              <div className="flex items-center gap-3">
+                                <Avatar className="border-2 border-yellow-500">
+                                  <AvatarFallback className="bg-yellow-500 text-black">
+                                    {friend.full_name?.charAt(0) || friend.phone?.charAt(2)}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <div>
+                                  <h3 className="font-bold text-yellow-500">{friend.full_name}</h3>
+                                  <p className="text-gray-400 text-sm">{friend.phone}</p>
+                                </div>
+                              </div>
+                            </Card>
+                          ))
+                        )
                       )}
                     </TabsContent>
                   </Tabs>
+                </Card>
+              </div>
+            )}
+
+            {/* Settings Section */}
+            {activeSection === 'settings' && (
+              <div className="space-y-4">
+                <h2 className="text-2xl font-bold text-yellow-500 mb-4">Настройки</h2>
+                <Card className="p-6 bg-black border-2 border-yellow-500">
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="settings-city" className="text-yellow-500">Город</Label>
+                      <Input 
+                        id="settings-city"
+                        value={userCity}
+                        onChange={(e) => setUserCity(e.target.value)}
+                        className="bg-gray-900 border-yellow-500 text-white mt-2"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="settings-birth-date" className="text-yellow-500">Дата рождения</Label>
+                      <Input 
+                        id="settings-birth-date"
+                        type="date"
+                        value={userBirthDate}
+                        onChange={(e) => setUserBirthDate(e.target.value)}
+                        className="bg-gray-900 border-yellow-500 text-white mt-2"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="email-visible" className="text-yellow-500">Показывать email в профиле</Label>
+                      <input
+                        id="email-visible"
+                        type="checkbox"
+                        checked={emailVisible}
+                        onChange={(e) => setEmailVisible(e.target.checked)}
+                        className="w-5 h-5 bg-gray-900 border-yellow-500 rounded"
+                      />
+                    </div>
+                    <Button 
+                      onClick={updateSettings}
+                      className="w-full bg-yellow-500 text-black hover:bg-yellow-400"
+                    >
+                      Сохранить настройки
+                    </Button>
+                  </div>
                 </Card>
               </div>
             )}

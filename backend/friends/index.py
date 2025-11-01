@@ -45,20 +45,24 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             
             if action == 'search' and search_query:
                 cur.execute("""
-                    SELECT id, username, full_name, is_admin
+                    SELECT id, username, phone, full_name, city, birth_date, avatar_url, is_admin
                     FROM t_p65610497_sacred_young_network.users
-                    WHERE username ILIKE %s OR full_name ILIKE %s
-                    ORDER BY username
+                    WHERE phone ILIKE %s OR full_name ILIKE %s OR city ILIKE %s
+                    ORDER BY full_name
                     LIMIT 20
-                """, (f'%{search_query}%', f'%{search_query}%'))
+                """, (f'%{search_query}%', f'%{search_query}%', f'%{search_query}%'))
                 
                 users = []
                 for row in cur.fetchall():
                     users.append({
                         'id': row[0],
                         'username': row[1],
-                        'full_name': row[2],
-                        'is_admin': row[3]
+                        'phone': row[2],
+                        'full_name': row[3],
+                        'city': row[4],
+                        'birth_date': row[5].isoformat() if row[5] else None,
+                        'avatar_url': row[6],
+                        'is_admin': row[7]
                     })
                 
                 return {
@@ -70,13 +74,13 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             
             if action == 'list' and user_id:
                 cur.execute("""
-                    SELECT DISTINCT u.id, u.username, u.full_name, u.is_admin
+                    SELECT DISTINCT u.id, u.username, u.phone, u.full_name, u.city, u.birth_date, u.avatar_url, u.is_admin
                     FROM t_p65610497_sacred_young_network.users u
                     INNER JOIN t_p65610497_sacred_young_network.friendships f
                     ON (f.user_id = %s AND f.friend_id = u.id)
                     OR (f.friend_id = %s AND f.user_id = u.id)
                     WHERE f.status = 'accepted'
-                    ORDER BY u.username
+                    ORDER BY u.full_name
                 """, (user_id, user_id))
                 
                 friends = []
@@ -84,8 +88,12 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     friends.append({
                         'id': row[0],
                         'username': row[1],
-                        'full_name': row[2],
-                        'is_admin': row[3]
+                        'phone': row[2],
+                        'full_name': row[3],
+                        'city': row[4],
+                        'birth_date': row[5].isoformat() if row[5] else None,
+                        'avatar_url': row[6],
+                        'is_admin': row[7]
                     })
                 
                 return {
