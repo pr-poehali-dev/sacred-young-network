@@ -5,10 +5,9 @@ from typing import Dict, Any
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     '''
-    Business: Manages friend relationships and user search
-    Args: event with httpMethod, body, queryStringParameters
-          context with request_id
-    Returns: HTTP response with friends data or search results
+    Business: Friends system with requests and status management
+    Args: event - HTTP event; context - request context
+    Returns: Friends list and requests
     '''
     method: str = event.get('httpMethod', 'GET')
     
@@ -17,216 +16,179 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             'statusCode': 200,
             'headers': {
                 'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+                'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
                 'Access-Control-Allow-Headers': 'Content-Type, X-User-Id',
                 'Access-Control-Max-Age': '86400'
             },
             'body': ''
         }
     
-    dsn = os.environ.get('DATABASE_URL')
-    if not dsn:
+    database_url = os.environ.get('DATABASE_URL')
+    if not database_url:
         return {
             'statusCode': 500,
             'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
             'isBase64Encoded': False,
-            'body': json.dumps({'error': 'Database not configured'})
+            'body': json.dumps({'error': 'Database configuration error'})
         }
     
-    conn = psycopg2.connect(dsn)
-    cur = conn.cursor()
-    
+    conn = psycopg2.connect(database_url)
     try:
-        if method == 'GET':
-            params = event.get('queryStringParameters', {})
-            action = params.get('action', 'list')
-            user_id = params.get('user_id')
-            search_query = params.get('q', '').strip()
-            
-            if action == 'search' and search_query:
-                cur.execute("""
-                    SELECT id, username, phone, full_name, city, birth_date, avatar_url, is_admin
-                    FROM t_p65610497_sacred_young_network.users
-                    WHERE phone ILIKE %s OR full_name ILIKE %s OR city ILIKE %s
-                    ORDER BY full_name
-                    LIMIT 20
-                """, (f'%{search_query}%', f'%{search_query}%', f'%{search_query}%'))
+        with conn.cursor() as cur:
+            if method == 'POST':
+                body_data = json.loads(event.get('body', '{}'))
+                action = body_data.get('action', '')
+                user_id = body_data.get('user_id')
+                friend_id = body_data.get('friend_id')
                 
-                users = []
-                for row in cur.fetchall():
-                    users.append({
-                        'id': row[0],
-                        'username': row[1],
-                        'phone': row[2],
-                        'full_name': row[3],
-                        'city': row[4],
-                        'birth_date': row[5].isoformat() if row[5] else None,
-                        'avatar_url': row[6],
-                        'is_admin': row[7]
-                    })
-                
-                return {
-                    'statusCode': 200,
-                    'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
-                    'isBase64Encoded': False,
-                    'body': json.dumps({'users': users})
-                }
-            
-            if action == 'list' and user_id:
-                cur.execute("""
-                    SELECT DISTINCT u.id, u.username, u.phone, u.full_name, u.city, u.birth_date, u.avatar_url, u.is_admin
-                    FROM t_p65610497_sacred_young_network.users u
-                    INNER JOIN t_p65610497_sacred_young_network.friendships f
-                    ON (f.user_id = %s AND f.friend_id = u.id)
-                    OR (f.friend_id = %s AND f.user_id = u.id)
-                    WHERE f.status = 'accepted'
-                    ORDER BY u.full_name
-                """, (user_id, user_id))
-                
-                friends = []
-                for row in cur.fetchall():
-                    friends.append({
-                        'id': row[0],
-                        'username': row[1],
-                        'phone': row[2],
-                        'full_name': row[3],
-                        'city': row[4],
-                        'birth_date': row[5].isoformat() if row[5] else None,
-                        'avatar_url': row[6],
-                        'is_admin': row[7]
-                    })
-                
-                return {
-                    'statusCode': 200,
-                    'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
-                    'isBase64Encoded': False,
-                    'body': json.dumps({'friends': friends})
-                }
-            
-            if action == 'check' and user_id:
-                target_id = params.get('target_id')
-                if not target_id:
+                if not user_id or not friend_id:
                     return {
                         'statusCode': 400,
                         'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
                         'isBase64Encoded': False,
-                        'body': json.dumps({'error': 'target_id required'})
+                        'body': json.dumps({'error': 'user_id and friend_id are required'})
+                    }
+                
+                if action == 'send_request':
+                    try:
+                        cur.execute("""
+                            INSERT INTO friends (user_id, friend_id, status)
+                            VALUES (%s, %s, 'pending')
+                            RETURNING id
+                        """, (user_id, friend_id))
+                        conn.commit()
+                        
+                        return {
+                            'statusCode': 201,
+                            'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                            'isBase64Encoded': False,
+                            'body': json.dumps({'success': True})
+                        }
+                    except psycopg2.IntegrityError:
+                        conn.rollback()
+                        return {
+                            'statusCode': 409,
+                            'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                            'isBase64Encoded': False,
+                            'body': json.dumps({'error': 'Request already exists'})
+                        }
+                
+                if action == 'accept':
+                    cur.execute("""
+                        UPDATE friends 
+                        SET status = 'accepted'
+                        WHERE friend_id = %s AND user_id = %s AND status = 'pending'
+                    """, (user_id, friend_id))
+                    
+                    cur.execute("""
+                        INSERT INTO friends (user_id, friend_id, status)
+                        VALUES (%s, %s, 'accepted')
+                        ON CONFLICT (user_id, friend_id) DO NOTHING
+                    """, (user_id, friend_id))
+                    
+                    conn.commit()
+                    
+                    return {
+                        'statusCode': 200,
+                        'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                        'isBase64Encoded': False,
+                        'body': json.dumps({'success': True})
+                    }
+                
+                if action == 'reject':
+                    cur.execute("""
+                        DELETE FROM friends
+                        WHERE friend_id = %s AND user_id = %s AND status = 'pending'
+                    """, (user_id, friend_id))
+                    conn.commit()
+                    
+                    return {
+                        'statusCode': 200,
+                        'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                        'isBase64Encoded': False,
+                        'body': json.dumps({'success': True})
+                    }
+                
+                if action == 'remove':
+                    cur.execute("""
+                        DELETE FROM friends
+                        WHERE (user_id = %s AND friend_id = %s) OR (user_id = %s AND friend_id = %s)
+                    """, (user_id, friend_id, friend_id, user_id))
+                    conn.commit()
+                    
+                    return {
+                        'statusCode': 200,
+                        'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                        'isBase64Encoded': False,
+                        'body': json.dumps({'success': True})
+                    }
+            
+            if method == 'GET':
+                params = event.get('queryStringParameters', {})
+                user_id = params.get('user_id')
+                request_type = params.get('type', 'friends')
+                
+                if not user_id:
+                    return {
+                        'statusCode': 400,
+                        'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                        'isBase64Encoded': False,
+                        'body': json.dumps({'error': 'user_id is required'})
+                    }
+                
+                if request_type == 'pending':
+                    cur.execute("""
+                        SELECT f.id, f.user_id, u.username, u.full_name, u.avatar_url, f.created_at
+                        FROM friends f
+                        JOIN users u ON f.user_id = u.id
+                        WHERE f.friend_id = %s AND f.status = 'pending'
+                        ORDER BY f.created_at DESC
+                    """, (user_id,))
+                    
+                    requests = cur.fetchall()
+                    
+                    return {
+                        'statusCode': 200,
+                        'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                        'isBase64Encoded': False,
+                        'body': json.dumps([{
+                            'id': r[0],
+                            'user_id': r[1],
+                            'username': r[2],
+                            'full_name': r[3],
+                            'avatar_url': r[4],
+                            'created_at': r[5].isoformat() if r[5] else None
+                        } for r in requests])
                     }
                 
                 cur.execute("""
-                    SELECT COUNT(*) FROM t_p65610497_sacred_young_network.friendships
-                    WHERE ((user_id = %s AND friend_id = %s)
-                    OR (user_id = %s AND friend_id = %s))
-                    AND status = 'accepted'
-                """, (user_id, target_id, target_id, user_id))
+                    SELECT u.id, u.username, u.full_name, u.avatar_url, u.bio
+                    FROM friends f
+                    JOIN users u ON (f.friend_id = u.id AND f.user_id = %s) OR (f.user_id = u.id AND f.friend_id = %s)
+                    WHERE f.status = 'accepted' AND u.id != %s
+                    ORDER BY u.username
+                """, (user_id, user_id, user_id))
                 
-                is_friend = cur.fetchone()[0] > 0
-                
-                return {
-                    'statusCode': 200,
-                    'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
-                    'isBase64Encoded': False,
-                    'body': json.dumps({'is_friend': is_friend})
-                }
-        
-        if method == 'POST':
-            body_data = json.loads(event.get('body', '{}'))
-            action = body_data.get('action')
-            user_id = body_data.get('user_id')
-            target_id = body_data.get('target_id')
-            
-            if not all([action, user_id, target_id]):
-                return {
-                    'statusCode': 400,
-                    'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
-                    'isBase64Encoded': False,
-                    'body': json.dumps({'error': 'Missing required fields'})
-                }
-            
-            if action == 'add':
-                cur.execute("""
-                    INSERT INTO t_p65610497_sacred_young_network.friendships (user_id, friend_id, status)
-                    VALUES (%s, %s, 'accepted')
-                    ON CONFLICT DO NOTHING
-                    RETURNING id
-                """, (user_id, target_id))
-                
-                result = cur.fetchone()
-                
-                if result:
-                    cur.execute("""
-                        INSERT INTO t_p65610497_sacred_young_network.friendships (user_id, friend_id, status)
-                        VALUES (%s, %s, 'accepted')
-                        ON CONFLICT DO NOTHING
-                    """, (target_id, user_id))
-                
-                conn.commit()
-                
-                if result:
-                    cur.execute("""
-                        SELECT username, full_name FROM t_p65610497_sacred_young_network.users WHERE id = %s
-                    """, (user_id,))
-                    initiator = cur.fetchone()
-                    
-                    cur.execute("""
-                        INSERT INTO t_p65610497_sacred_young_network.notifications
-                        (user_id, type, content, related_user_id)
-                        VALUES (%s, %s, %s, %s)
-                    """, (
-                        target_id,
-                        'friend_added',
-                        f'{initiator[1] or initiator[0]} добавил вас в друзья',
-                        user_id
-                    ))
-                    conn.commit()
+                friends = cur.fetchall()
                 
                 return {
                     'statusCode': 200,
                     'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
                     'isBase64Encoded': False,
-                    'body': json.dumps({'success': True, 'message': 'Friend added'})
+                    'body': json.dumps([{
+                        'id': f[0],
+                        'username': f[1],
+                        'full_name': f[2],
+                        'avatar_url': f[3],
+                        'bio': f[4]
+                    } for f in friends])
                 }
-            
-            if action == 'remove':
-                cur.execute("""
-                    DELETE FROM t_p65610497_sacred_young_network.friendships
-                    WHERE (user_id = %s AND friend_id = %s)
-                    OR (user_id = %s AND friend_id = %s)
-                """, (user_id, target_id, target_id, user_id))
-                
-                conn.commit()
-                
-                cur.execute("""
-                    SELECT username, full_name FROM t_p65610497_sacred_young_network.users WHERE id = %s
-                """, (user_id,))
-                initiator = cur.fetchone()
-                
-                cur.execute("""
-                    INSERT INTO t_p65610497_sacred_young_network.notifications
-                    (user_id, type, content, related_user_id)
-                    VALUES (%s, %s, %s, %s)
-                """, (
-                    target_id,
-                    'friend_removed',
-                    f'{initiator[1] or initiator[0]} удалил вас из друзей',
-                    user_id
-                ))
-                conn.commit()
-                
-                return {
-                    'statusCode': 200,
-                    'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
-                    'isBase64Encoded': False,
-                    'body': json.dumps({'success': True, 'message': 'Friend removed'})
-                }
-        
-        return {
-            'statusCode': 405,
-            'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
-            'isBase64Encoded': False,
-            'body': json.dumps({'error': 'Method not allowed'})
-        }
-    
     finally:
-        cur.close()
         conn.close()
+    
+    return {
+        'statusCode': 405,
+        'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+        'isBase64Encoded': False,
+        'body': json.dumps({'error': 'Method not allowed'})
+    }

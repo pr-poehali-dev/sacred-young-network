@@ -4,9 +4,21 @@
       "name": "Get all posts",
       "method": "GET",
       "path": "/",
-      "expectedStatus": 200,
+      "expectedStatus": 200
+    },
+    {
+      "name": "Create new post",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "create_post",
+        "user_id": 1,
+        "content": "Test post content"
+      },
+      "expectedStatus": 201,
       "expectedBody": {
-        "posts": "array"
+        "id": "number",
+        "content": "Test post content"
       },
       "bodyMatcher": "partial"
     }

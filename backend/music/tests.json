@@ -1,7 +1,7 @@
 {
   "tests": [
     {
-      "name": "Get friends list",
+      "name": "Get user music",
       "method": "GET",
       "path": "/",
       "queryParams": {

@@ -1,17 +1,14 @@
 import json
 import os
-import hashlib
-import secrets
-import base64
-from typing import Dict, Any
 import psycopg2
-import psycopg2.extras
+import bcrypt
+from typing import Dict, Any
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     '''
-    Business: User authentication and registration API with phone-based auth
-    Args: event with httpMethod, body (phone, password, full_name, birth_date, city, email)
-    Returns: HTTP response with user data or auth token
+    Business: Authentication system with registration validation and age/terms confirmation
+    Args: event - HTTP event with method and body; context - request context
+    Returns: HTTP response with auth tokens or user data
     '''
     method: str = event.get('httpMethod', 'GET')
     
@@ -20,158 +17,149 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             'statusCode': 200,
             'headers': {
                 'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type, X-User-Id, X-Auth-Token',
+                'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, X-User-Id',
                 'Access-Control-Max-Age': '86400'
             },
-            'body': '',
-            'isBase64Encoded': False
+            'body': ''
         }
     
     database_url = os.environ.get('DATABASE_URL')
+    if not database_url:
+        return {
+            'statusCode': 500,
+            'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+            'isBase64Encoded': False,
+            'body': json.dumps({'error': 'Database configuration error'})
+        }
     
     if method == 'POST':
         body_data = json.loads(event.get('body', '{}'))
-        action = body_data.get('action', 'login')
+        action = body_data.get('action', '')
         
         conn = psycopg2.connect(database_url)
         try:
             with conn.cursor() as cur:
                 if action == 'register':
-                    phone = body_data.get('phone', '')
+                    email = body_data.get('email', '')
+                    username = body_data.get('username', '')
                     password = body_data.get('password', '')
                     full_name = body_data.get('full_name', '')
-                    birth_date = body_data.get('birth_date', '')
-                    city = body_data.get('city', '')
-                    email = body_data.get('email', '')
-                    is_admin = body_data.get('is_admin', False)
+                    age_confirmed = body_data.get('age_confirmed', False)
+                    terms_accepted = body_data.get('terms_accepted', False)
                     
-                    if not phone or not password or not full_name or not birth_date:
+                    if not email or not username or not password:
                         return {
                             'statusCode': 400,
                             'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
                             'isBase64Encoded': False,
-                            'body': json.dumps({'error': 'Phone, password, full_name and birth_date are required'})
+                            'body': json.dumps({'error': 'Email, username and password are required'})
                         }
                     
-                    if phone != '+79270011297':
-                        cur.execute("SELECT COUNT(*) FROM users")
-                        user_count = cur.fetchone()[0]
-                        if user_count >= 5:
-                            return {
-                                'statusCode': 403,
-                                'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
-                                'isBase64Encoded': False,
-                                'body': json.dumps({'error': 'Достигнут лимит регистраций. Максимум 5 аккаунтов.'})
-                            }
-                    
-                    password_hash = hashlib.sha256(password.encode()).hexdigest()
-                    
-                    cur.execute(
-                        "SELECT id FROM users WHERE phone = %s",
-                        (phone,)
-                    )
-                    if cur.fetchone():
+                    if not age_confirmed or not terms_accepted:
                         return {
                             'statusCode': 400,
                             'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
                             'isBase64Encoded': False,
-                            'body': json.dumps({'error': 'Phone number already registered'})
+                            'body': json.dumps({'error': 'Вы должны подтвердить возраст и принять условия'})
                         }
                     
-                    username = f"user_{phone.replace('+', '').replace('-', '')}"
+                    if len(password) < 8:
+                        return {
+                            'statusCode': 400,
+                            'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                            'isBase64Encoded': False,
+                            'body': json.dumps({'error': 'Пароль должен содержать минимум 8 символов'})
+                        }
                     
-                    cur.execute(
-                        """INSERT INTO users (username, phone, email, password_hash, full_name, birth_date, city, is_admin) 
-                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s) 
-                           RETURNING id, username, phone, email, full_name, birth_date, city, is_admin, created_at""",
-                        (username, phone, email, password_hash, full_name, birth_date, city, is_admin)
-                    )
-                    user_row = cur.fetchone()
-                    new_user_id = user_row[0]
-                    conn.commit()
+                    has_upper = any(c.isupper() for c in password)
+                    has_lower = any(c.islower() for c in password)
+                    has_digit = any(c.isdigit() for c in password)
                     
-                    cur.execute(
-                        "SELECT id FROM users WHERE phone = %s AND is_admin = TRUE",
-                        ('+79270011297',)
-                    )
-                    admin = cur.fetchone()
+                    if not (has_upper and has_lower and has_digit):
+                        return {
+                            'statusCode': 400,
+                            'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                            'isBase64Encoded': False,
+                            'body': json.dumps({'error': 'Пароль должен содержать заглавные и строчные буквы, а также цифры'})
+                        }
                     
-                    if admin:
-                        admin_id = admin[0]
-                        cur.execute(
-                            """INSERT INTO t_p65610497_sacred_young_network.admin_requests (requester_id)
-                               VALUES (%s)""",
-                            (new_user_id,)
-                        )
+                    password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                    
+                    try:
+                        cur.execute("""
+                            INSERT INTO users (email, username, password_hash, full_name, age_confirmed, terms_accepted)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            RETURNING id, email, username, full_name, created_at
+                        """, (email, username, password_hash, full_name, age_confirmed, terms_accepted))
+                        
+                        user = cur.fetchone()
                         conn.commit()
-                    
-                    auth_token = secrets.token_urlsafe(32)
-                    
-                    user_data = {
-                        'id': user_row[0],
-                        'username': user_row[1],
-                        'phone': user_row[2],
-                        'email': user_row[3],
-                        'full_name': user_row[4],
-                        'birth_date': user_row[5].isoformat() if user_row[5] else None,
-                        'city': user_row[6],
-                        'is_admin': user_row[7],
-                        'created_at': user_row[8].isoformat(),
-                        'auth_token': auth_token
-                    }
-                    
-                    return {
-                        'statusCode': 200,
-                        'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
-                        'isBase64Encoded': False,
-                        'body': json.dumps(user_data)
-                    }
+                        
+                        return {
+                            'statusCode': 201,
+                            'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                            'isBase64Encoded': False,
+                            'body': json.dumps({
+                                'id': user[0],
+                                'email': user[1],
+                                'username': user[2],
+                                'full_name': user[3],
+                                'created_at': user[4].isoformat() if user[4] else None
+                            })
+                        }
+                    except psycopg2.IntegrityError:
+                        conn.rollback()
+                        return {
+                            'statusCode': 409,
+                            'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                            'isBase64Encoded': False,
+                            'body': json.dumps({'error': 'Email или username уже используется'})
+                        }
                 
-                elif action == 'login':
-                    phone = body_data.get('phone', '')
+                if action == 'login':
+                    email = body_data.get('email', '')
                     password = body_data.get('password', '')
                     
-                    password_hash = hashlib.sha256(password.encode()).hexdigest()
+                    if not email or not password:
+                        return {
+                            'statusCode': 400,
+                            'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                            'isBase64Encoded': False,
+                            'body': json.dumps({'error': 'Email and password are required'})
+                        }
                     
-                    cur.execute(
-                        """SELECT id, username, phone, email, full_name, birth_date, city, is_admin, avatar_url, bio, email_visible, created_at 
-                           FROM users WHERE phone = %s AND password_hash = %s""",
-                        (phone, password_hash)
-                    )
-                    user_row = cur.fetchone()
+                    cur.execute("SELECT id, email, username, password_hash, full_name, avatar_url, bio FROM users WHERE email = %s", (email,))
+                    user = cur.fetchone()
                     
-                    if not user_row:
+                    if not user:
                         return {
                             'statusCode': 401,
                             'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
                             'isBase64Encoded': False,
-                            'body': json.dumps({'error': 'Invalid credentials'})
+                            'body': json.dumps({'error': 'Неверный email или пароль'})
                         }
                     
-                    auth_token = secrets.token_urlsafe(32)
-                    
-                    user_data = {
-                        'id': user_row[0],
-                        'username': user_row[1],
-                        'phone': user_row[2],
-                        'email': user_row[3],
-                        'full_name': user_row[4],
-                        'birth_date': user_row[5].isoformat() if user_row[5] else None,
-                        'city': user_row[6],
-                        'is_admin': user_row[7],
-                        'avatar_url': user_row[8],
-                        'bio': user_row[9],
-                        'email_visible': user_row[10],
-                        'created_at': user_row[11].isoformat(),
-                        'auth_token': auth_token
-                    }
+                    if not bcrypt.checkpw(password.encode('utf-8'), user[3].encode('utf-8')):
+                        return {
+                            'statusCode': 401,
+                            'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                            'isBase64Encoded': False,
+                            'body': json.dumps({'error': 'Неверный email или пароль'})
+                        }
                     
                     return {
                         'statusCode': 200,
                         'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
                         'isBase64Encoded': False,
-                        'body': json.dumps(user_data)
+                        'body': json.dumps({
+                            'id': user[0],
+                            'email': user[1],
+                            'username': user[2],
+                            'full_name': user[4],
+                            'avatar_url': user[5],
+                            'bio': user[6]
+                        })
                     }
         finally:
             conn.close()
@@ -184,23 +172,16 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'statusCode': 400,
                 'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
                 'isBase64Encoded': False,
-                'body': json.dumps({'error': 'user_id required'})
+                'body': json.dumps({'error': 'user_id is required'})
             }
         
         conn = psycopg2.connect(database_url)
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    """SELECT u.id, u.username, u.phone, u.email, u.full_name, u.birth_date, u.city, u.is_admin, u.avatar_url, u.bio, u.email_visible,
-                              (SELECT COUNT(*) FROM friendships WHERE user_id = u.id AND status = 'accepted') as friends_count,
-                              (SELECT COUNT(*) FROM community_members WHERE user_id = u.id) as communities_count,
-                              (SELECT COUNT(*) FROM posts WHERE user_id = u.id) as posts_count
-                       FROM users u WHERE u.id = %s""",
-                    (user_id,)
-                )
-                user_row = cur.fetchone()
+                cur.execute("SELECT id, email, username, full_name, avatar_url, bio, created_at FROM users WHERE id = %s", (user_id,))
+                user = cur.fetchone()
                 
-                if not user_row:
+                if not user:
                     return {
                         'statusCode': 404,
                         'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
@@ -208,97 +189,22 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         'body': json.dumps({'error': 'User not found'})
                     }
                 
-                user_data = {
-                    'id': user_row[0],
-                    'username': user_row[1],
-                    'phone': user_row[2],
-                    'email': user_row[3] if user_row[10] else None,
-                    'full_name': user_row[4],
-                    'birth_date': user_row[5].isoformat() if user_row[5] else None,
-                    'city': user_row[6],
-                    'is_admin': user_row[7],
-                    'avatar_url': user_row[8],
-                    'bio': user_row[9],
-                    'email_visible': user_row[10],
-                    'friends_count': user_row[11],
-                    'communities_count': user_row[12],
-                    'posts_count': user_row[13]
-                }
-                
-                return {
-                    'statusCode': 200,
-                    'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
-                    'isBase64Encoded': False,
-                    'body': json.dumps(user_data)
-                }
-        finally:
-            conn.close()
-    
-    if method == 'PUT':
-        body_data = json.loads(event.get('body', '{}'))
-        action = body_data.get('action')
-        
-        if action == 'upload_avatar':
-            user_id = body_data.get('user_id')
-            file_content = body_data.get('file')
-            
-            if not user_id or not file_content:
-                return {
-                    'statusCode': 400,
-                    'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
-                    'isBase64Encoded': False,
-                    'body': json.dumps({'error': 'user_id and file required'})
-                }
-            
-            try:
-                if ',' in file_content:
-                    file_content = file_content.split(',')[1]
-                
-                file_bytes = base64.b64decode(file_content)
-                file_hash = hashlib.md5(file_bytes).hexdigest()
-                
-                file_extension = 'jpg'
-                if file_content.startswith('iVBOR'):
-                    file_extension = 'png'
-                elif file_content.startswith('/9j/'):
-                    file_extension = 'jpg'
-                elif file_content.startswith('R0lG'):
-                    file_extension = 'gif'
-                
-                filename = f"avatar_{user_id}_{file_hash}.{file_extension}"
-                file_url = f"https://storage.poehali.dev/uploads/{filename}"
-                
-                conn = psycopg2.connect(database_url)
-                try:
-                    with conn.cursor() as cur:
-                        cur.execute("""
-                            UPDATE users
-                            SET avatar_url = %s
-                            WHERE id = %s
-                        """, (file_url, user_id))
-                        
-                        conn.commit()
-                finally:
-                    conn.close()
-                
                 return {
                     'statusCode': 200,
                     'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
                     'isBase64Encoded': False,
                     'body': json.dumps({
-                        'success': True,
-                        'url': file_url,
-                        'filename': filename
+                        'id': user[0],
+                        'email': user[1],
+                        'username': user[2],
+                        'full_name': user[3],
+                        'avatar_url': user[4],
+                        'bio': user[5],
+                        'created_at': user[6].isoformat() if user[6] else None
                     })
                 }
-            
-            except Exception as e:
-                return {
-                    'statusCode': 500,
-                    'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
-                    'isBase64Encoded': False,
-                    'body': json.dumps({'error': f'Upload failed: {str(e)}'})
-                }
+        finally:
+            conn.close()
     
     return {
         'statusCode': 405,
